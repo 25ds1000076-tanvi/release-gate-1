@@ -1,0 +1,52 @@
+name: TDS GA7 Release Gate
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "TDS identity: 25ds1000076@ds.study.iitm.ac.in"
+        run: echo "identity marker"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Start server
+        run: nohup npm start > server.log 2>&1 &
+
+      - name: Wait for server
+        run: sleep 3
+
+      - name: Test safe payload returns promote
+        run: |
+          RESULT=$(curl -s -X POST localhost:3000/release-gate -H "Content-Type: application/json" -d '{
+            "target":"preview","event":"pull_request","ref":"refs/heads/feature",
+            "workflow":{"trigger":"pull_request","permissions":{"contents":"read","packages":"write","id-token":"none"},
+            "testsPassed":true,"matrixComplete":true,"failFast":false,"actions":[{"owner":"actions","name":"checkout","ref":"v4"}]},
+            "image":{"multiStage":true,"runsAsRoot":false,"secretMode":"none","criticalVulnerabilities":0,"digestPinned":true}
+          }')
+          echo "$RESULT"
+          echo "$RESULT" | grep -q '"decision":"promote"'
+
+      - name: Test unsafe payload returns block
+        run: |
+          RESULT=$(curl -s -X POST localhost:3000/release-gate -H "Content-Type: application/json" -d '{
+            "target":"production","event":"pull_request","ref":"refs/heads/develop",
+            "workflow":{"trigger":"pull_request_target","permissions":{"contents":"write","packages":"write","id-token":"none"},
+            "testsPassed":false,"matrixComplete":false,"failFast":true,"actions":[{"owner":"someorg","name":"bad-action","ref":"main"}]},
+            "image":{"multiStage":false,"runsAsRoot":true,"secretMode":"copy","criticalVulnerabilities":2,"digestPinned":false}
+          }')
+          echo "$RESULT"
+          echo "$RESULT" | grep -q '"decision":"block"'
